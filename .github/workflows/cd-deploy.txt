@@ -1,0 +1,17 @@
+name: CD Deploy
+on:
+  workflow_run:
+    workflows: ["terraform-setup-aws"] # Matches the name in ci-build.yml
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Only run if Build succeeded
+    # Use a condition to ensure the job runs only if the prior workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Deploy application
+        run: echo "Deployment started after successful CI run"
+        # Additional steps to download artifacts from the previous workflow go here

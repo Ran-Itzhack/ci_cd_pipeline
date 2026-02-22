@@ -1,0 +1,37 @@
+
+# "data" - data sources are a read-only mechanism used to fetch or compute data from external systems.
+# 1. Dynamically find the latest Ubuntu 24.04 AMI in us-west-2
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical's AWS Owner ID
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+# 2. Create the EC2 Instance using the data source ID
+resource "aws_instance" "example_server_terraform_gh_action_workflow" {
+  ami           = data.aws_ami.ubuntu.id
+  instance_type = "t2.micro"
+
+  tags = {
+    Name = "ec2-created-from-terraform"
+  }
+
+  provisioner "local-exec" {
+    command = "echo 'Hello aws_instance. Deployment using Terraform and GitHub Actions Workflows' > example_server_terraform_gh_action_workflow.txt"
+  }
+}
+
+resource "null_resource" "running_scripts_to_create_file" {
+  provisioner "local-exec" {
+    command = "echo 'Automate AWS Infra Deployment using Terraform and GitHub Actions Workflows' > hello.txt"
+  }
+}

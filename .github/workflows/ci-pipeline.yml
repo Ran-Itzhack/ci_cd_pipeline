@@ -1,0 +1,103 @@
+name: ci-pipeline
+
+###
+# Triggers: run on push and pull_request to main
+###
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+###
+# Optional: prevent multiple CI runs for the same ref
+###
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # --- Validate Terraform in tr_src ---
+  terraform-validate:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tr_src
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.1.7"
+          terraform_wrapper: false
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive -diff
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform validate
+
+  # --- Build application and produce artifact for CD ---
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build Application
+        run: |
+          echo "Building... (simulating build output)"
+          echo "This is some data" > build_output.txt
+
+      - name: Upload Build Data
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-data
+          path: .
+          if-no-files-found: error
+
+  # --- Unit / integration tests ---
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run tests
+        run: |
+          echo "Running unit tests..."
+          # Add your test commands here, e.g.:
+          # npm test
+          # pytest
+          # go test ./...
+
+  # --- Security scan ---
+  security-scan:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run security checks
+        run: |
+          echo "Running security scan..."
+          # Optional: add Trivy, CodeQL, or other scanners
+
+  # --- Gate: workflow only succeeds when all jobs pass (CD runs on workflow_run success) ---
+  ci-success:
+    name: CI success
+    runs-on: ubuntu-latest
+    needs: [terraform-validate, build, test, security-scan]
+    steps:
+      - run: echo "All CI jobs completed successfully."
