@@ -17,8 +17,8 @@ terraform {
 }
 
 provider "aws" {
-  alias      = "ohio"
-  region     = "us-east-2"
+  alias  = "ohio"
+  region = "us-east-2"
   # access_key = var.access_key
   # secret_key = var.secret_key
 }
@@ -29,16 +29,16 @@ module "vpc" {
   vpc_cidr = var.vpc_cidr
 }
 
-# module "sg" {
-#   source = "./modules/sg"
-#   vpc_id = module.vpc.vpc_id
-# }
+module "sg" {
+  source = "./modules/sg"
+  vpc_id = module.vpc.vpc_id
+}
 
-# module "ec2" {
-#   source = "./modules/ec2"
-#   vpc_id = module.vpc.vpc_id
-#   sg_id = module.sg.security_group_id # Pass the output from the SG module into the EC2 variable
-# }
+module "ec2" {
+  source = "./modules/ec2"
+  vpc_id = module.vpc.vpc_id
+  sg_id  = module.sg.security_group_id # Pass the output from the SG module into the EC2 variable
+}
 
 
 data "aws_caller_identity" "current" {}
@@ -64,7 +64,7 @@ resource "null_resource" "create_file_localy" {
     # command = "echo 'Automate AWS Infra Deployment ${join(", ", data.aws_subnets.example.ids)} using Terraform...' > hello.txt"
     # command = "echo -e 'Automate AWS Infra Deployment\n${join(", ", data.aws_subnets.example.ids)}\nusing Terraform and GitHub Actions Workflows' > hello.txt"
     command = <<EOT
-                  echo 'AWS User Account Info : ${ jsonencode(data.aws_caller_identity.current) }\n' > aws_user_account_info.txt
+                  echo 'AWS User Account Info : ${jsonencode(data.aws_caller_identity.current)}\n' > aws_user_account_info.txt
                 EOT
   }
 }

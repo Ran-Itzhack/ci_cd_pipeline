@@ -13,17 +13,18 @@ Component:
 # Create the EC2 Instance using the data source ID
 resource "aws_instance" "ubuntu_ec2_instance_terraform" {
 
-  ami           = data.aws_ami.ubuntu.id
-  instance_type = "t2.micro"
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = "t2.micro"
   subnet_id                   = aws_subnet.tf_subnet_public.id
   vpc_security_group_ids      = [var.sg_id]
   associate_public_ip_address = true
-  
+
   tags = {
     Name = "aws-ec2-instance-terraform"
   }
 
-  user_data = file("${path.module}/setup_nginx.sh")
+  # Docker pre-installed via user_data so CD can pull from Docker Hub and run containers
+  user_data = file("${path.module}/install_docker_on_ubuntu_aws_ec2.sh")
 }
 
 
@@ -32,7 +33,7 @@ resource "aws_internet_gateway" "terraform_gw" {
   vpc_id = var.vpc_id
 
   tags = {
-    Name = "terraform_internet_gateway"
+    Name        = "terraform_internet_gateway"
     Environment = "TF_development_internet_gateway"
   }
 }
@@ -47,7 +48,7 @@ resource "aws_subnet" "tf_subnet_public" {
   # availability_zone       = element(local.availability_zones, count.index)
 
   tags = {
-    Name = "terraform_subnet_public"
+    Name        = "terraform_subnet_public"
     Environment = "TF_development_subnet_public"
   }
 }
@@ -62,7 +63,7 @@ resource "aws_route_table" "terraform_rt_public" {
   }
 
   tags = {
-    Name  = "terraform__rt-public"
+    Name        = "terraform__rt-public"
     Environment = "TF_development_rt_public"
   }
 }

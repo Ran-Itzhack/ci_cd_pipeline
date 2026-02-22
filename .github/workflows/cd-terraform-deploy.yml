@@ -7,7 +7,7 @@ on:
   workflow_run:
     workflows: ["ci-pipeline"]
     types: [completed]
-  # workflow_dispatch: {}   # Allow manual run from Actions tab
+  workflow_dispatch: {}   # Allow manual run from Actions tab
 
 
 ####
@@ -15,7 +15,7 @@ on:
 ###
 jobs:
  
-  terraform:
+  terraform_deploy_aws_resources:
     # Run when CI succeeded (workflow_run) or when triggered manually (workflow_dispatch)
     if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run && github.event.workflow_run.conclusion == 'success')
     name: Set up AWS through Terraform
@@ -45,11 +45,6 @@ jobs:
         if: github.event_name == 'workflow_run'
         run: ls -R
 
-      - run: echo "Deploying..."
-
-      # - name: Checkout
-      #   uses: actions/checkout@v2
-
       # Establish an AWS Account
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -58,7 +53,9 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }} 
           # role-session-name: GitHub-OIDC-TERRAFORM
       
-      # Establish a Terraform
+      ##
+      # Setup AWS resources using Terraform 
+      ##
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -99,7 +96,7 @@ jobs:
   
   deploy:
     name: Deploy Docker to EC2
-    needs: [ terraform ]
+    needs: [ terraform_deploy_aws_resources ]
     runs-on: ubuntu-latest
     # Only run if Build succeeded
     # Use a condition to ensure the job runs only if the prior workflow succeeded
@@ -121,12 +118,10 @@ jobs:
           F_TIME: "${{ steps.current-time.outputs.formattedTime }}"
           YEAR: "${{ steps.current-time.outputs.year }}"
           DAY: "${{ steps.current-time.outputs.day }}"
-        run: echo $TIME $R_TIME $F_TIME $YEAR $DAY
-      - run: echo "TIME; ${{ toJson(steps.current-time.outputs)}}"
-      - name: DEPLOY JOB; Deployment started after successful CI run
-        run: echo "A; ${{ secrets.AWS_ROLE }}"
-      - run: echo "B;  ${{ secrets.AWS_REGION }}"
-      - run: echo "Timestamp; ${{github.event}}"
+        run: echo "TIME; ${{ toJson(steps.current-time.outputs)}}"
+      
+      - name: DEPLOY JOB - Deployment started after successful CI run
+        run: echo "github.event; ${{ toJson(github.event)}}"
   #     - name: Checkout Repository
   #       uses: actions/checkout@v4
 
