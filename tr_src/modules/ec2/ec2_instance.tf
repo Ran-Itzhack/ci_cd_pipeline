@@ -18,12 +18,15 @@ resource "aws_instance" "ubuntu_ec2_instance_terraform" {
   subnet_id                   = aws_subnet.tf_subnet_public.id
   vpc_security_group_ids      = [var.sg_id]
   associate_public_ip_address = true
+  # key_name                    = var.aws_key_pair.deployer.key_name
+  key_name                      = aws_key_pair.deployer.key_name
 
   tags = {
     Name = "aws-ec2-instance-terraform"
   }
 
   # Docker pre-installed via user_data so CD can pull from Docker Hub and run containers
+  # user_data = file("${path.module}/setup_nginx.sh")
   user_data = file("${path.module}/install_docker_on_ubuntu_aws_ec2.sh")
 }
 
