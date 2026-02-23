@@ -1,0 +1,151 @@
+name: cd-terraform-deploy-aws # Setup AWS resources using Terraform and GitHub Actions (JWT from GitHub's OpenID Connect)
+
+####
+# Triggers: after CI completes, or manually via "Run workflow"
+###
+on:
+  workflow_run:
+    workflows: ["ci-pipeline"]
+    types: [completed]
+  # workflow_dispatch: {}   # Allow manual run from Actions tab
+
+
+####
+# Getting start trigger the schedule for this job definition. 
+###
+jobs:
+ 
+  terraform:
+    # Run when CI succeeded (workflow_run) or when triggered manually (workflow_dispatch)
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run && github.event.workflow_run.conclusion == 'success')
+    name: Set up AWS through Terraform
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # This permission setting enables the workflow to request and use a JSON Web Token (JWT) from GitHub's OpenID Connect (OIDC) provider. 
+      contents: read # This permission grants the GITHUB_TOKEN read-only access to the repository's contents (for actions/checkout@v2). 
+    
+    defaults:
+      run:
+        working-directory: tr_src
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download artifact (from triggering CI run)
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: build-data
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: tr_src/
+
+      - name: Check files artifact downloaded
+        if: github.event_name == 'workflow_run'
+        run: ls -R
+
+      - run: echo "Deploying..."
+
+      # - name: Checkout
+      #   uses: actions/checkout@v2
+
+      # Establish an AWS Account
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE }} 
+          aws-region: ${{ secrets.AWS_REGION }} 
+          # role-session-name: GitHub-OIDC-TERRAFORM
+      
+      # Establish a Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.1.7"
+          terraform_wrapper: false
+      #
+      - name: Terraform Format
+        id: fmt
+        run: terraform fmt
+
+      - name: Terraform Init
+        id: init
+        run: terraform init
+      #
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color
+      #
+      - name: Terraform Plan Status
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+      - run: |
+          echo "steps.plan.outcome :${{ toJson(steps.plan) }}"
+      #
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false
+      - run:  |
+          pwd
+          ls  -ltra
+      - run: echo "Terraform status steps :${{ toJson(steps) }}"
+      #
+      - name: List files in the repository (tree)
+        run: tree .
+  
+  ##
+  # --- DEPLOY JOB: Deployment started after successful CI run ---
+  ##
+  
+  deploy:
+    name: Deploy Docker to EC2
+    needs: [ terraform ]
+    runs-on: ubuntu-latest
+    # Only run if Build succeeded
+    # Use a condition to ensure the job runs only if the prior workflow succeeded
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run && github.event.workflow_run.conclusion == 'success')
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Get current time
+        uses: josStorer/get-current-time@v2
+        id: current-time
+        with:
+          format: YYYYMMDD-HH
+          utcOffset: "+08:00"
+      - name: Use current time
+        env:
+          TIME: "${{ steps.current-time.outputs.time }}"
+          R_TIME: "${{ steps.current-time.outputs.readableTime }}"
+          F_TIME: "${{ steps.current-time.outputs.formattedTime }}"
+          YEAR: "${{ steps.current-time.outputs.year }}"
+          DAY: "${{ steps.current-time.outputs.day }}"
+        run: echo $TIME $R_TIME $F_TIME $YEAR $DAY
+      - run: echo "TIME; ${{ toJson(steps.current-time.outputs)}}"
+      - name: DEPLOY JOB; Deployment started after successful CI run
+        run: echo "A; ${{ secrets.AWS_ROLE }}"
+      - run: echo "B;  ${{ secrets.AWS_REGION }}"
+      - run: echo "Timestamp; ${{github.event}}"
+  #     - name: Checkout Repository
+  #       uses: actions/checkout@v4
+
+  #     - name: Configure AWS Credentials
+  #       uses: aws-actions/configure-aws-credentials@v4
+  #       with:
+  #         role-to-assume: ${{ secrets.AWS_ROLE }}
+  #         aws-region: ${{ secrets.AWS_REGION }}
+
+  #     - name: Execute Remote Docker Commands via SSM
+  #       run: |
+  #         aws ssm send-command \
+  #           --document-name "AWS-RunShellScript" \
+  #           --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
+  #           --parameters 'commands=[
+  #             "sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}",
+  #             "sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/cddemo:latest",
+  #             "sudo docker stop cddemo || true",
+  #             "sudo docker rm cddemo || true",
+  #             "sudo docker run -d --name cddemo -p 80:3000 ${{ secrets.DOCKERHUB_USERNAME }}/cddemo:latest"
+  #           ]' \
+  #           --comment "Deploying via GitHub Actions SSM"

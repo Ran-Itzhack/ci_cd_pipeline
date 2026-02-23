@@ -7,7 +7,7 @@ on:
   workflow_run:
     workflows: ["ci-pipeline"]
     types: [completed]
-  # workflow_dispatch: {}   # Allow manual run from Actions tab
+  workflow_dispatch: {}   # Allow manual run from Actions tab
 
 
 ####
@@ -15,11 +15,13 @@ on:
 ###
 jobs:
  
-  terraform:
+  terraform_deploy_aws_resources:
     # Run when CI succeeded (workflow_run) or when triggered manually (workflow_dispatch)
     if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run && github.event.workflow_run.conclusion == 'success')
     name: Set up AWS through Terraform
     runs-on: ubuntu-latest
+    outputs:
+      instance_id: ${{ steps.ec2-id.outputs.instance_id }}
     permissions:
       id-token: write # This permission setting enables the workflow to request and use a JSON Web Token (JWT) from GitHub's OpenID Connect (OIDC) provider. 
       contents: read # This permission grants the GITHUB_TOKEN read-only access to the repository's contents (for actions/checkout@v2). 
@@ -45,11 +47,6 @@ jobs:
         if: github.event_name == 'workflow_run'
         run: ls -R
 
-      - run: echo "Deploying..."
-
-      # - name: Checkout
-      #   uses: actions/checkout@v2
-
       # Establish an AWS Account
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -58,7 +55,9 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }} 
           # role-session-name: GitHub-OIDC-TERRAFORM
       
-      # Establish a Terraform
+      ##
+      # Setup AWS resources using Terraform 
+      ##
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -85,6 +84,9 @@ jobs:
       #
       - name: Terraform Apply
         run: terraform apply -auto-approve -input=false
+      - name: Export EC2 instance ID for deploy job
+        id: ec2-id
+        run: echo "instance_id=$(terraform output -raw ec2_instance_id)" >> $GITHUB_OUTPUT
       - run:  |
           pwd
           ls  -ltra
@@ -99,53 +101,83 @@ jobs:
   
   deploy:
     name: Deploy Docker to EC2
-    needs: [ terraform ]
+    needs: [ terraform_deploy_aws_resources ]
     runs-on: ubuntu-latest
-    # Only run if Build succeeded
-    # Use a condition to ensure the job runs only if the prior workflow succeeded
     if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run && github.event.workflow_run.conclusion == 'success')
     permissions:
       id-token: write
       contents: read
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      EC2_INSTANCE_ID: ${{ needs.terraform_deploy_aws_resources.outputs.instance_id }}
     steps:
-      - name: Get current time
-        uses: josStorer/get-current-time@v2
-        id: current-time
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          format: YYYYMMDD-HH
-          utcOffset: "+08:00"
-      - name: Use current time
+          role-to-assume: ${{ secrets.AWS_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Wait for EC2 Docker ready (SSM)
+        run: |
+          set -e
+          echo "Waiting for Docker on instance $EC2_INSTANCE_ID..."
+          CMD_ID=$(aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --parameters 'commands=["for i in 1 2 3 4 5 6 7 8 9 10 11 12; do docker info >/dev/null 2>&1 && echo ready && exit 0; sleep 15; done; echo timeout; exit 1"]' \
+            --comment "Wait for Docker daemon" \
+            --output text --query "Command.CommandId")
+          for i in $(seq 1 30); do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" --query "Status" --output text 2>/dev/null || echo "Pending")
+            echo "Docker wait status: $STATUS"
+            [ "$STATUS" = "Success" ] && break
+            [ "$STATUS" = "Failed" ] && aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" && exit 1
+            sleep 10
+          done
+          echo "Docker is ready on EC2."
+
+      - name: Verify Docker enabled on boot (SSM)
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --parameters 'commands=["systemctl is-enabled docker"]' \
+            --comment "Verify docker enabled" \
+            --output text --query "Command.CommandId")
+          sleep 5
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" --query "[Status, StandardOutputContent]" --output text
+
+      - name: Deploy via SSM (Docker login, pull, run)
         env:
-          TIME: "${{ steps.current-time.outputs.time }}"
-          R_TIME: "${{ steps.current-time.outputs.readableTime }}"
-          F_TIME: "${{ steps.current-time.outputs.formattedTime }}"
-          YEAR: "${{ steps.current-time.outputs.year }}"
-          DAY: "${{ steps.current-time.outputs.day }}"
-        run: echo $TIME $R_TIME $F_TIME $YEAR $DAY
-      - run: echo "TIME; ${{ toJson(steps.current-time.outputs)}}"
-      - name: DEPLOY JOB; Deployment started after successful CI run
-        run: echo "A; ${{ secrets.AWS_ROLE }}"
-      - run: echo "B;  ${{ secrets.AWS_REGION }}"
-      - run: echo "Timestamp; ${{github.event}}"
-  #     - name: Checkout Repository
-  #       uses: actions/checkout@v4
-
-  #     - name: Configure AWS Credentials
-  #       uses: aws-actions/configure-aws-credentials@v4
-  #       with:
-  #         role-to-assume: ${{ secrets.AWS_ROLE }}
-  #         aws-region: ${{ secrets.AWS_REGION }}
-
-  #     - name: Execute Remote Docker Commands via SSM
-  #       run: |
-  #         aws ssm send-command \
-  #           --document-name "AWS-RunShellScript" \
-  #           --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
-  #           --parameters 'commands=[
-  #             "sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}",
-  #             "sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/cddemo:latest",
-  #             "sudo docker stop cddemo || true",
-  #             "sudo docker rm cddemo || true",
-  #             "sudo docker run -d --name cddemo -p 80:3000 ${{ secrets.DOCKERHUB_USERNAME }}/cddemo:latest"
-  #           ]' \
-  #           --comment "Deploying via GitHub Actions SSM"
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
+        run: |
+          set -e
+          IMAGE="${DOCKER_IMAGE:-$DOCKERHUB_USERNAME/cddemo:latest}"
+          COMMANDS_JSON=$(jq -n \
+            --arg u "$DOCKERHUB_USERNAME" \
+            --arg p "$DOCKERHUB_TOKEN" \
+            --arg img "$IMAGE" \
+            '{commands: [
+              "docker login -u \($u) -p \($p)",
+              "docker pull \($img)",
+              "docker stop cddemo || true",
+              "docker rm cddemo || true",
+              "docker run -d --name cddemo -p 80:3000 --restart unless-stopped \($img)"
+            ]}')
+          CMD_ID=$(aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --parameters "$COMMANDS_JSON" \
+            --comment "Deploying via GitHub Actions SSM" \
+            --output text --query "Command.CommandId")
+          echo "Command ID: $CMD_ID"
+          for i in $(seq 1 36); do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" --query "Status" --output text 2>/dev/null || echo "Pending")
+            echo "Deploy status: $STATUS"
+            [ "$STATUS" = "Success" ] && break
+            [ "$STATUS" = "Failed" ] && aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" && exit 1
+            sleep 10
+          done
+          echo "Deploy completed."
