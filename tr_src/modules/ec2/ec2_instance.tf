@@ -23,7 +23,8 @@ resource "aws_instance" "ubuntu_ec2_instance_terraform" {
     Name = "aws-ec2-instance-terraform"
   }
 
-  user_data = file("${path.module}/setup_nginx.sh")
+  # user_data = file("${path.module}/setup_nginx.sh")
+  user_data = file("${path.module}/install_docker_on_ubuntu_aws_ec2.sh")
 }
 
 
@@ -76,5 +77,9 @@ resource "aws_route_table_association" "terraform_rta_public" {
 
 output "ec2_ip_address" {
   value = aws_instance.ubuntu_ec2_instance_terraform.public_ip
+}
+
+output "ec2_instance_id" {
+  value = aws_instance.ubuntu_ec2_instance_terraform.id
 }
 

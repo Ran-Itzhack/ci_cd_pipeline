@@ -84,8 +84,12 @@ jobs:
       #
       - name: Terraform Apply
         run: terraform apply -auto-approve -input=false
+      # - name: Export EC2 instance ID for deploy job
+      #   id: ec2-id
+      #   run: echo "instance_id=$(terraform output -raw ec2_instance_id)" >> $GITHUB_OUTPUT
       - name: Export EC2 instance ID for deploy job
         id: ec2-id
+        working-directory: tr_src  # Ensure this matches where terraform apply ran
         run: echo "instance_id=$(terraform output -raw ec2_instance_id)" >> $GITHUB_OUTPUT
       - run:  |
           pwd
